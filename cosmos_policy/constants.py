@@ -43,6 +43,12 @@ ALOHA_CONSTANTS = {
     "PROPRIO_DIM": 14,
 }
 
+ANYTASK_CONSTANTS = {
+    "NUM_ACTIONS_CHUNK": 16,
+    "ACTION_DIM": 7,
+    "PROPRIO_DIM": 9,
+}
+
 
 # Function to detect robot platform from command line arguments
 def detect_robot_platform():
@@ -54,6 +60,8 @@ def detect_robot_platform():
         return "ROBOCASA"
     elif "aloha" in cmd_args:
         return "ALOHA"
+    elif "anytask" in cmd_args or "skillgen" in cmd_args:
+        return "ANYTASK"
     else:
         # Default to LIBERO if unclear
         return "LIBERO"
@@ -69,6 +77,8 @@ elif ROBOT_PLATFORM == "ROBOCASA":
     constants = ROBOCASA_CONSTANTS
 elif ROBOT_PLATFORM == "ALOHA":
     constants = ALOHA_CONSTANTS
+elif ROBOT_PLATFORM == "ANYTASK":
+    constants = ANYTASK_CONSTANTS
 
 # Assign constants to global variables
 NUM_ACTIONS_CHUNK = constants["NUM_ACTIONS_CHUNK"]

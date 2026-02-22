@@ -162,6 +162,21 @@ def attention(
         except TypeError:
             sdpa_kernel_ = sdpa_kernel
             SDPA_BACKENDS = [BEST_SDPA_BACKEND]
+        
+        # Handle 5D tensors often produced by context parallelism or certain tokenizers
+        def ensure_4d(t):
+            if t.ndim == 5:
+                # Try to squeeze singleton dimensions
+                for dim in (1, 2):
+                    if t.shape[dim] == 1:
+                        t = t.squeeze(dim)
+                        if t.ndim == 4:
+                            break
+            return t
+
+        q = ensure_4d(q)
+        k = ensure_4d(k)
+        v = ensure_4d(v)
 
         q = q.transpose(1, 2)
         k = k.transpose(1, 2)

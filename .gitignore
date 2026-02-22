@@ -1,2 +1,11 @@
 /.cuda-name
 /build
+*.png
+*.hdf5
+*.h5
+*.mp4
+*.jpg
+*.gif
+*.json
+__pycache__/
+*.pkl

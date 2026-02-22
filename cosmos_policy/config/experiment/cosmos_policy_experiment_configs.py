@@ -23,6 +23,7 @@ from cosmos_policy._src.imaginaire.lazy_config import LazyDict
 from cosmos_policy._src.imaginaire.utils import log
 from cosmos_policy._src.imaginaire.utils.checkpoint_db import get_checkpoint_path  # noqa: F401
 from cosmos_policy.datasets.aloha_dataset import ALOHADataset
+from cosmos_policy.datasets.anytask_dataset import AnyTaskDataset
 from cosmos_policy.datasets.libero_dataset import LIBERODataset
 from cosmos_policy.datasets.robocasa_dataset import RoboCasaDataset
 from cosmos_policy.models.policy_video2world_model import CosmosPolicyVideo2WorldModel
@@ -462,10 +463,79 @@ cosmos_predict2_2b_480p_aloha_185_demos_4_tasks_mixture_foldshirt15_candiesinbow
 )
 
 
+
+# *** Custom Dataset ***
+custom_dataset_skillgen_1000 = L(AnyTaskDataset)(
+    data_dir="data/skillgen_1000_replay",
+    chunk_size=16,
+    use_image_aug=True,
+    use_stronger_image_aug=True,
+    use_proprio=True,
+    normalize_proprio=True,
+    normalize_actions=True,
+    num_duplicates_per_image=4,
+    demonstration_sampling_prob=1.0, # All demos
+    success_rollout_sampling_prob=0.0,
+    return_value_function_returns=True,
+    gamma=0.998,
+    use_wrist_images=True, # Assuming we want to use them if available
+    use_third_person_images=True,
+    lazy_video_decompression=True,
+)
+
+cosmos_predict2_2b_480p_anytask = LazyDict(
+    dict(
+        defaults=[
+            "/experiment/cosmos_predict2_2b_480p_libero",
+            "_self_",
+        ],
+        scheduler=dict(
+            cycle_lengths=[20000, 100000000000000],
+            warm_up_steps=[2000, 0],
+            f_start=[1e-6, 0.06],
+            f_max=[1.0, 0.06],
+            f_min=[0.3, 0.06],
+        ),
+        # Using LIBERO-style config for state_t and tokenizer (2 cameras)
+        model=L(CosmosPolicyVideo2WorldModel)(
+            config=dict(
+                state_t=9,  # Latent temporal dim (blank, proprio, wrist, primary, action, future proprio, future wrist, future primary, value)
+                min_num_conditional_frames=4,  # 1 blank, 3 conditioning (proprio, wrist, primary)
+                max_num_conditional_frames=4,
+                tokenizer=dict(
+                    chunk_duration=33,  # 1 blank + 32 images (4 proprio, 4 wrist image, 4 primary image, 4 action, 4 future proprio, 4 future wrist, 4 future primary, 4 value)
+                ),
+            ),
+        ),
+        dataloader_train=L(DataLoader)(
+            num_workers=8,
+            persistent_workers=True,
+            pin_memory=True,
+            dataset=custom_dataset_skillgen_1000,
+            sampler=L(DistributedSampler)(
+                dataset=custom_dataset_skillgen_1000,
+                num_replicas=L(parallel_state.get_data_parallel_world_size)(),
+                rank=L(parallel_state.get_data_parallel_rank)(),
+                shuffle=True,
+                seed=0,
+            ),
+            batch_size=8, # conservative batch size for custom testing
+            drop_last=True,
+        ),
+        job=dict(
+            group="cosmos_v2_finetune",
+            name="cosmos_predict2_2b_480p_anytask",
+        ),
+    )
+)
+
+
 def register_configs():
     cs = ConfigStore.instance()
     # Register the experiments
     for _item in [
+        # AnyTask
+        cosmos_predict2_2b_480p_anytask,
         # LIBERO
         cosmos_predict2_2b_480p_libero,  # *** Main checkpoint ***
         cosmos_predict2_2b_480p_libero__inference_only,
