@@ -9,3 +9,4 @@
 *.json
 __pycache__/
 *.pkl
+LIBERO-Cosmos-Policy/*

@@ -8,6 +8,33 @@ From the project root, build the image:
 docker build -t cosmos-policy docker
 ```
 
+### Instantiate the ray cluster
+
+```bash
+tensors ray create -t $TEAM -c zwang-cosmos-policy --image-uri us-docker.pkg.dev/engineering-380817/bdai/cosmos-policy --image-tag cosmos-policy-zwang --h100x8-replicas 1  --k8s-context lam-248
+```
+
+### Push the docker to GAR
+
+```bash
+export TAG=zwang-cosmos-policy-<something>
+docker tag cosmos-policy us-docker.pkg.dev/engineering-380817/bdai/cosmos-policy:${TAG}
+tensors ray push-image -c zwang-cosmos-policy --image-uri us-docker.pkg.dev/engineering-380817/bdai/cosmos-policy --image-tag cosmos-policy-zwang --k8s-context lam-248
+```
+
+Then do google cloud login
+
+```bash
+gcloud auth login
+gcloud auth configure-docker us-docker.pkg.dev
+```
+
+Finally, you can push the docker image to GAR
+
+```bash
+docker push us-docker.pkg.dev/engineering-380817/bdai/cosmos-policy:${TAG}
+```
+
 ### Launch the Docker Container
 
 Start an interactive session:
