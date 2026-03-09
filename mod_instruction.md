@@ -8,18 +8,17 @@ From the project root, build the image:
 docker build -t cosmos-policy docker
 ```
 
-### Instantiate the ray cluster
+<!-- ### Instantiate the ray cluster
 
 ```bash
 tensors ray create -t $TEAM -c zwang-cosmos-policy --image-uri us-docker.pkg.dev/engineering-380817/bdai/cosmos-policy --image-tag cosmos-policy-zwang --h100x8-replicas 1  --k8s-context lam-248
-```
+``` -->
 
 ### Push the docker to GAR
 
 ```bash
 export TAG=zwang-cosmos-policy-<something>
-docker tag cosmos-policy us-docker.pkg.dev/engineering-380817/bdai/cosmos-policy:${TAG}
-tensors ray push-image -c zwang-cosmos-policy --image-uri us-docker.pkg.dev/engineering-380817/bdai/cosmos-policy --image-tag cosmos-policy-zwang --k8s-context lam-248
+docker tag cosmos-policy us-docker.pkg.dev/engineering-380817/bdai/foundation_models/zwang-cosmos-policy:${TAG}
 ```
 
 Then do google cloud login
@@ -32,7 +31,13 @@ gcloud auth configure-docker us-docker.pkg.dev
 Finally, you can push the docker image to GAR
 
 ```bash
-docker push us-docker.pkg.dev/engineering-380817/bdai/cosmos-policy:${TAG}
+docker image push us-docker.pkg.dev/engineering-380817/bdai/foundation_models/zwang-cosmos-policy:${TAG}
+```
+
+### Create the K8s Job
+
+```bash
+kubectl apply -f docker/manifest.yml
 ```
 
 ### Launch the Docker Container
@@ -66,7 +71,7 @@ To start training, run the following command from within the docker container:
 ```bash
 uv run --extra cu128 --group libero --python 3.10 \
   python -m cosmos_policy.scripts.train \
-  --config cosmos_policy/config/config_v2.py \
+  --config cosmos_policy/config/config.py \
   -- \
   experiment=cosmos_predict2_2b_480p_anytask
 ```
@@ -78,7 +83,7 @@ To do a dry run to verify your configuration without starting training:
 ```bash
 uv run --extra cu128 --group libero --python 3.10 \
   python -m cosmos_policy.scripts.train \
-  --config cosmos_policy/config/config_v2.py \
+  --config cosmos_policy/config/config.py \
   --dryrun \
   -- \
   experiment=cosmos_predict2_2b_480p_anytask

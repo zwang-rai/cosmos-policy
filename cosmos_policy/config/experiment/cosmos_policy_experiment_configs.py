@@ -23,7 +23,8 @@ from cosmos_policy._src.imaginaire.lazy_config import LazyDict
 from cosmos_policy._src.imaginaire.utils import log
 from cosmos_policy._src.imaginaire.utils.checkpoint_db import get_checkpoint_path  # noqa: F401
 from cosmos_policy.datasets.aloha_dataset import ALOHADataset
-from cosmos_policy.datasets.anytask_dataset import AnyTaskDataset
+from cosmos_policy.datasets.vpl_dataset import VPLDataset
+from cosmos_policy.datasets.craft_dataset import CraftDataset
 from cosmos_policy.datasets.libero_dataset import LIBERODataset
 from cosmos_policy.datasets.robocasa_dataset import RoboCasaDataset
 from cosmos_policy.models.policy_video2world_model import CosmosPolicyVideo2WorldModel
@@ -463,9 +464,12 @@ cosmos_predict2_2b_480p_aloha_185_demos_4_tasks_mixture_foldshirt15_candiesinbow
 )
 
 
+# =========================================================================================
+# Sim world datasets/experiments (VPL format)
+# =========================================================================================
 
-# *** Custom Dataset ***
-custom_dataset_skillgen_1000 = L(AnyTaskDataset)(
+# *** Stack Banana 832 Demos ***
+stack_banana_832_demos_dataset = L(VPLDataset)(
     data_dir="data/skillgen_1000_replay",
     chunk_size=16,
     use_image_aug=True,
@@ -480,10 +484,31 @@ custom_dataset_skillgen_1000 = L(AnyTaskDataset)(
     gamma=0.998,
     use_wrist_images=True, # Assuming we want to use them if available
     use_third_person_images=True,
-    lazy_video_decompression=True,
+    task_description="stack banana on can",
 )
 
-cosmos_predict2_2b_480p_anytask = LazyDict(
+# *** Stack Banana 100 Demos ***
+stack_banana_100_demos_dataset = L(VPLDataset)(
+    data_dir="data/skillgen_1000_replay",
+    index_file="data/skillgen_1000_replay/trainset_100_index.txt",
+    chunk_size=16,
+    use_image_aug=True,
+    use_stronger_image_aug=True,
+    use_proprio=True,
+    normalize_proprio=True,
+    normalize_actions=True,
+    num_duplicates_per_image=4,
+    # The probability of picking a "perfect" human demonstration versus a policy rollout (if mixed).
+    demonstration_sampling_prob=1.0, # All demos in the index file as anytask are all human demos
+    success_rollout_sampling_prob=0.0,
+    return_value_function_returns=True,
+    gamma=0.998,
+    use_wrist_images=True,
+    use_third_person_images=True,
+    task_description="stack banana on can",
+)
+
+cosmos_predict2_2b_480p_stack_banana_832_demos = LazyDict(
     dict(
         defaults=[
             "/experiment/cosmos_predict2_2b_480p_libero",
@@ -511,20 +536,226 @@ cosmos_predict2_2b_480p_anytask = LazyDict(
             num_workers=8,
             persistent_workers=True,
             pin_memory=True,
-            dataset=custom_dataset_skillgen_1000,
+            dataset=stack_banana_832_demos_dataset,
             sampler=L(DistributedSampler)(
-                dataset=custom_dataset_skillgen_1000,
+                dataset=stack_banana_832_demos_dataset,
                 num_replicas=L(parallel_state.get_data_parallel_world_size)(),
                 rank=L(parallel_state.get_data_parallel_rank)(),
                 shuffle=True,
                 seed=0,
             ),
-            batch_size=8, # conservative batch size for custom testing
+            batch_size=25, # conservative batch size for custom testing
             drop_last=True,
         ),
         job=dict(
             group="cosmos_v2_finetune",
-            name="cosmos_predict2_2b_480p_anytask",
+            name="cosmos_predict2_2b_480p_stack_banana_832_demos",
+        ),
+    )
+)
+
+cosmos_predict2_2b_480p_stack_banana_100_demos = LazyDict(
+    dict(
+        defaults=[
+            "/experiment/cosmos_predict2_2b_480p_libero",
+            "_self_",
+        ],
+        scheduler=dict(
+            cycle_lengths=[20000, 100000000000000],
+            warm_up_steps=[2000, 0],
+            f_start=[1e-6, 0.06],
+            f_max=[1.0, 0.06],
+            f_min=[0.3, 0.06],
+        ),
+        # Using LIBERO-style config for state_t and tokenizer (2 cameras)
+        model=L(CosmosPolicyVideo2WorldModel)(
+            config=dict(
+                state_t=9,  # Latent temporal dim (blank, proprio, wrist, primary, action, future proprio, future wrist, future primary, value)
+                min_num_conditional_frames=4,  # 1 blank, 3 conditioning (proprio, wrist, primary)
+                max_num_conditional_frames=4,
+                tokenizer=dict(
+                    chunk_duration=33,  # 1 blank + 32 images (4 proprio, 4 wrist image, 4 primary image, 4 action, 4 future proprio, 4 future wrist, 4 future primary, 4 value)
+                ),
+            ),
+        ),
+        dataloader_train=L(DataLoader)(
+            num_workers=8,
+            persistent_workers=True,
+            pin_memory=True,
+            dataset=stack_banana_100_demos_dataset,
+            sampler=L(DistributedSampler)(
+                dataset=stack_banana_832_demos_dataset,
+                num_replicas=L(parallel_state.get_data_parallel_world_size)(),
+                rank=L(parallel_state.get_data_parallel_rank)(),
+                shuffle=True,
+                seed=0,
+            ),
+            batch_size=25, # conservative batch size for custom testing
+            drop_last=True,
+        ),
+        job=dict(
+            group="cosmos_v2_finetune",
+            name="cosmos_predict2_2b_480p_stack_banana_100_demos",
+        ),
+    )
+)
+
+# Inference version
+cosmos_predict2_2b_480p_stack_banana_100_demos__inference = LazyDict(
+    dict(
+        defaults=[
+            "/experiment/cosmos_predict2_2b_480p_stack_banana_100_demos",
+            "_self_",
+        ],
+        model=L(CosmosPolicyVideo2WorldModel)(
+            config=dict(
+                sde=L(HybridEDMSDE)(
+                    sigma_max=80,
+                    sigma_min=4,
+                )
+            )
+        ),
+        job=dict(
+            group="cosmos_v2_inference",
+            name="cosmos_predict2_2b_480p_stack_banana_100_demos__inference",
+        ),
+    )
+)
+# =========================================================================================
+# Real world datasets/experiments (Craft format)
+# =========================================================================================
+
+lift_banana_real_dataset = L(CraftDataset)(
+    data_dir="data/lifting_banana_real_gello/vpl_processed",
+    chunk_size=16,
+    use_image_aug=True,
+    use_stronger_image_aug=True,
+    use_wrist_images=True,
+    use_third_person_images=True,
+    use_proprio=True,
+    normalize_proprio=True,
+    normalize_actions=True,
+    num_duplicates_per_image=4,
+    return_value_function_returns=True,
+    gamma=0.998,
+    task_description="lift banana",                                                                              
+)
+
+stack_banana_on_can_real_dataset = L(CraftDataset)(
+    data_dir="data/anytask_real_dataset/stack_banana_on_can",
+    chunk_size=16,
+    use_image_aug=True,
+    use_stronger_image_aug=True,
+    use_wrist_images=True,
+    use_third_person_images=True,
+    use_proprio=True,
+    normalize_proprio=True,
+    normalize_actions=True,
+    num_duplicates_per_image=4,
+    return_value_function_returns=True,
+    gamma=0.998,
+    task_description="stack banana on can",
+)
+
+cosmos_predict2_2b_480p_lift_banana_real= LazyDict(
+    dict(
+        defaults=[
+            "/experiment/cosmos_predict2_2b_480p_libero",
+            "_self_",
+        ],
+        dataloader_train=L(DataLoader)(
+            num_workers=8,
+            persistent_workers=True,
+            pin_memory=True,
+            dataset=lift_banana_real_dataset,
+            sampler=L(DistributedSampler)(
+                shuffle=True,
+                seed=0,
+            ),
+            batch_size=25,
+            drop_last=True,
+        ),
+        optimizer=dict(
+            lr=1e-4,  # Lower learning rate for fine-tuning 
+        ),
+        scheduler=dict(
+            # LR decay for 20K steps in cycle #1, then decay by 5x and stay constant forever in cycle #2
+            cycle_lengths=[20000, 100000000000000],
+            warm_up_steps=[2000, 0],
+            f_start=[1e-6, 0.06],
+            f_max=[1.0, 0.06],
+            f_min=[0.3, 0.06],
+        ),
+        job=dict(
+            group="cosmos_v2_finetune",
+            name="cosmos_predict2_2b_480p_lift_banana_real",
+        ),
+    )
+)
+
+cosmos_predict2_2b_480p_stack_banana_on_can_real= LazyDict(
+    dict(
+        defaults=[
+            "/experiment/cosmos_predict2_2b_480p_libero",
+            "_self_",
+        ],
+        dataloader_train=L(DataLoader)(
+            num_workers=8,
+            persistent_workers=True,
+            pin_memory=True,
+            dataset=stack_banana_on_can_real_dataset,
+            sampler=L(DistributedSampler)(
+                shuffle=True,
+                seed=0,
+            ),
+            batch_size=25,
+            drop_last=True,
+        ),
+        optimizer=dict(
+            lr=1e-4,  # Lower learning rate for fine-tuning 
+        ),
+        scheduler=dict(
+            # LR decay for 20K steps in cycle #1, then decay by 5x and stay constant forever in cycle #2
+            cycle_lengths=[20000, 100000000000000],
+            warm_up_steps=[2000, 0],
+            f_start=[1e-6, 0.06],
+            f_max=[1.0, 0.06],
+            f_min=[0.3, 0.06],
+        ),
+        job=dict(
+            group="cosmos_v2_finetune",
+            name="cosmos_predict2_2b_480p_stack_banana_on_can_real",
+        ),
+    )
+)
+
+franka_dual_dataset = L(CraftDataset)(
+    data_dir="data/small_test_set/vpl_processed",
+    t5_text_embeddings_path="data/small_test_set/vpl_processed/t5_embeddings.pkl",
+    is_dual_arm=True,
+)
+
+cosmos_predict2_2b_480p_franka_dual = LazyDict(
+    dict(
+        defaults=[
+            "/experiment/cosmos_predict2_2b_480p_aloha_185_demos_4_tasks_mixture_foldshirt15_candiesinbowl45_candyinbag45_eggplantchickenonplate80",
+            "_self_",
+        ],
+        dataloader_train=L(DataLoader)(
+            num_workers=8,
+            persistent_workers=True,
+            pin_memory=True,
+            dataset=franka_dual_dataset,
+            sampler=L(DistributedSampler)(
+                shuffle=True,
+                seed=0,
+            ),
+            batch_size=25,
+            drop_last=True,
+        ),
+        job=dict(
+            group="cosmos_v2_finetune",
+            name="cosmos_predict2_2b_480p_franka_dual",
         ),
     )
 )
@@ -535,7 +766,9 @@ def register_configs():
     # Register the experiments
     for _item in [
         # AnyTask
-        cosmos_predict2_2b_480p_anytask,
+        cosmos_predict2_2b_480p_stack_banana_100_demos,
+        cosmos_predict2_2b_480p_stack_banana_100_demos__inference,
+        cosmos_predict2_2b_480p_stack_banana_832_demos,
         # LIBERO
         cosmos_predict2_2b_480p_libero,  # *** Main checkpoint ***
         cosmos_predict2_2b_480p_libero__inference_only,
@@ -547,6 +780,10 @@ def register_configs():
         cosmos_predict2_2b_480p_aloha_185_demos_4_tasks_mixture_foldshirt15_candiesinbowl45_candyinbag45_eggplantchickenonplate80__inference_only,
         cosmos_predict2_2b_480p_aloha_185_demos_4_tasks_mixture_foldshirt15_candiesinbowl45_candyinbag45_eggplantchickenonplate80__resumeFrom50K_648_rollouts_Vsprime_value_func,  # ALOHA planning model
         cosmos_predict2_2b_480p_aloha_185_demos_4_tasks_mixture_foldshirt15_candiesinbowl45_candyinbag45_eggplantchickenonplate80__resumeFrom50K_648_rollouts_Vsprime_value_func__inference_only,
+        # Real world
+        cosmos_predict2_2b_480p_stack_banana_on_can_real,
+        cosmos_predict2_2b_480p_lift_banana_real,
+        cosmos_predict2_2b_480p_franka_dual,
     ]:
         experiment_name = _item["job"]["name"]
         log.info(f"Registering experiment: {experiment_name}")

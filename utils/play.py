@@ -1,6 +1,6 @@
 import random
 import numpy as np
-from cosmos_policy.datasets.anytask_dataset import AnyTaskDataset
+from cosmos_policy.datasets.vpl_dataset import VPLDataset
 from cosmos_policy.experiments.robot.libero.run_libero_eval import PolicyEvalConfig
 
 import torch
@@ -40,9 +40,9 @@ init_t5_text_embeddings_cache(cfg.t5_text_embeddings_path)
 # Load model
 model, cosmos_config = get_model(cfg)
 
-# Initialize AnyTaskDataset
-print("Initializing AnyTaskDataset...")
-dataset = AnyTaskDataset(
+# Initialize VPLDataset
+print("Initializing VPLDataset...")
+dataset = VPLDataset(
     data_dir="data/skillgen_1000_replay",
     is_train=True,
     normalize_images=False, # We want raw uint8 images for get_action

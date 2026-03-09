@@ -3,13 +3,13 @@ import os
 import torch
 import numpy as np
 from tqdm import tqdm
-from cosmos_policy.datasets.anytask_dataset import AnyTaskDataset
+from cosmos_policy.datasets.vpl_dataset import VPLDataset
 
 def verify_dataset():
     data_dir = "data/skillgen_1000_replay"
     
-    print(f"Initializing AnyTaskDataset from {data_dir}...")
-    dataset = AnyTaskDataset(
+    print(f"Initializing VPLDataset from {data_dir}...")
+    dataset = VPLDataset(
         data_dir=data_dir,
         is_train=True,
         chunk_size=50,

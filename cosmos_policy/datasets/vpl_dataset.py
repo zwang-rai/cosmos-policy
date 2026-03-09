@@ -6,15 +6,26 @@ import cv2
 import torch
 import random
 from tqdm import tqdm
+# Post-loading setup (stats, mapping, etc) -> Copy from ALOHA
+from cosmos_policy.datasets.dataset_common import (
+    calculate_epoch_structure, 
+    load_or_compute_dataset_statistics, 
+    load_or_compute_post_normalization_statistics,
+    determine_sample_type,
+    get_action_chunk_with_padding,
+    compute_monte_carlo_returns
+)
+from cosmos_policy.datasets.dataset_utils import (
+    calculate_dataset_statistics, 
+    rescale_data, 
+    preprocess_image)
 from cosmos_policy.datasets.aloha_dataset import ALOHADataset, get_video_num_frames, load_video_as_images
-from cosmos_policy.datasets.dataset_common import determine_sample_type, get_action_chunk_with_padding
 from cosmos_policy.utils.utils import duplicate_array
-from cosmos_policy.datasets.dataset_utils import preprocess_image
 import pickle
 from cosmos_policy.datasets.t5_embedding_utils import generate_t5_embeddings, save_embeddings
 from cosmos_policy.utils.transform_utils import quat2euler
 
-class AnyTaskDataset(ALOHADataset):
+class VPLDataset(ALOHADataset):
     def __init__(
         self,
         data_dir: str,
@@ -35,7 +46,7 @@ class AnyTaskDataset(ALOHADataset):
         num_duplicates_per_image: int = 4,
         return_value_function_returns: bool = True,
         gamma: float = 0.998,
-        lazy_video_decompression: bool = False,
+        lazy_video_decompression: bool = False, # Make sure this is False for Anytask, or the training will be very slow
         rollout_data_dir: str = "",
         demonstration_sampling_prob: float = 0.5,
         success_rollout_sampling_prob: float = 0.5,
@@ -45,12 +56,13 @@ class AnyTaskDataset(ALOHADataset):
         load_all_rollouts_into_ram: bool = False,
         use_third_person_images: bool = True,
         use_wrist_images: bool = True,
+        task_description: str = "",
+        index_file: str = "",
     ):
         # Initialize basic attributes (copying from ALOHADataset)
         self.data_dir = data_dir
         self.chunk_size = chunk_size
         self.final_image_size = final_image_size
-        self.t5_text_embeddings_path = t5_text_embeddings_path
         self.normalize_images = normalize_images
         self.normalize_actions = normalize_actions
         self.normalize_proprio = normalize_proprio
@@ -75,19 +87,29 @@ class AnyTaskDataset(ALOHADataset):
         self._jpeg_rollout_hint_emitted = False
         self.use_third_person_images = use_third_person_images
         self.use_wrist_images = use_wrist_images
+        self.index_file = index_file
 
-        # Anytask (VPL) dataset file discovery
+        # VPL dataset file discovery
         hdf5_files = glob.glob(os.path.join(data_dir, "episode_*", "*.h5"))
         print("hdf5 files found:", len(hdf5_files))
         hdf5_files.sort() # Ensure deterministic order
 
+        # Handle index file filtering
+        if self.index_file:
+            print(f"Loading index file from {self.index_file}")
+            with open(self.index_file, "r") as f:
+                content = f.read().strip()
+                # Remove trailing comma if present and split by comma or newline
+                indices = [int(i.strip()) for i in content.replace(",", "\n").split() if i.strip()]
+            
+            print(f"Filtering dataset with {len(indices)} indices from index file")
+            hdf5_files = [hdf5_files[i] for i in indices if i < len(hdf5_files)]
+
         if is_train:
-            # Simple split for demo: 90% train, 10% val
-            split_idx = int(0.05 * len(hdf5_files))
+            split_idx = int(1.0 * len(hdf5_files))
             hdf5_files = hdf5_files[:split_idx]
             print(f"Training split: {len(hdf5_files)} episodes")
         else:
-            # Validation set
             split_idx = int(0.05 * len(hdf5_files))
             hdf5_files = hdf5_files[split_idx:]
             print(f"Validation split: {len(hdf5_files)} episodes")
@@ -107,21 +129,19 @@ class AnyTaskDataset(ALOHADataset):
                 with h5py.File(file, "r") as f:
                     # Load End-Effector Actions & Proprio
                     # User requested 7-dim action space (Pos + Euler + Gripper) to match LIBERO
-                    ee_pos = f["ee_position"][:] # (T, 3)
-                    ee_rot = f["ee_rotation"][:] # (T, 4) Quaternion (assume x,y,z,w or w,x,y,z - quat2euler handles shape)
-                    gripper = f["gripper_width"][:] # (T, 1)
-                    
-                    # Convert quaternion to euler
-                    ee_euler = quat2euler(ee_rot) # (T, 3)
-                    
-                    # Form 7-dim action vector
+                    ee_pos = f["ee_position"][:]  # (T, 3)
+                    ee_rot_wxyz = f["ee_rotation"][:]  # (T, 4), AnyTask stores quaternions as [w, x, y, z]
+                    gripper = f["gripper_width"][:]
+                    if gripper.ndim == 1:
+                        gripper = gripper[:, None]
+
+                    # quat2euler expects [x, y, z, w], so convert from AnyTask [w, x, y, z].
+                    ee_rot_xyzw = np.concatenate([ee_rot_wxyz[:, 1:], ee_rot_wxyz[:, :1]], axis=-1)
+                    ee_euler = quat2euler(ee_rot_xyzw)  # (T, 3)
                     # [x, y, z, roll, pitch, yaw, gripper]
                     actions = np.concatenate([ee_pos, ee_euler, gripper], axis=-1).astype(np.float32)
-                    
-                    # User requested 9-dim proprio (joint positions)
-                    proprio = f["joint_pos"][:] # (T, 9)
+                    proprio = actions.copy() # follow libero
 
-                    # Determine Sequence Length
                     episode_num_steps = actions.shape[0]
 
                     # Construct Video Paths
@@ -162,12 +182,15 @@ class AnyTaskDataset(ALOHADataset):
                         wrist_images = load_safe(video_paths.get("cam_wrist"))
                         
                     # Task Description / Command
-                    # Search for task description in attributes, fallback to reasonable default
-                    command = f.attrs.get("task_description", "Stack the banana on top of the meat can")
+                    command = f.attrs.get("task_description", task_description)
                     if isinstance(command, bytes):
                         command = command.decode("utf-8")
                     
                     self.unique_commands.add(command)
+
+                    # Add value function returns if applicable
+                    if self.return_value_function_returns:
+                        returns = compute_monte_carlo_returns(episode_num_steps, terminal_reward=1.0, gamma=self.gamma)
  
                     # Store Entry
                     # Must match keys expected by __getitem__
@@ -177,6 +200,7 @@ class AnyTaskDataset(ALOHADataset):
                         "actions": actions,
                         "command": command,
                         "num_steps": episode_num_steps,
+                        "returns": returns.copy() if self.return_value_function_returns else None,
                         "video_paths": video_paths, # For lazy loading
                         "images": images,
                         "wrist_images": wrist_images,
@@ -190,14 +214,6 @@ class AnyTaskDataset(ALOHADataset):
             except Exception as e:
                 print(f"Error loading {file}: {e}")
                 continue
-
-        # Post-loading setup (stats, mapping, etc) -> Copy from ALOHA
-        from cosmos_policy.datasets.dataset_common import (
-            calculate_epoch_structure, 
-            load_or_compute_dataset_statistics, 
-            load_or_compute_post_normalization_statistics
-        )
-        from cosmos_policy.datasets.dataset_utils import calculate_dataset_statistics, rescale_data
 
         # Build mapping
         self._build_step_index_mapping()
@@ -221,7 +237,6 @@ class AnyTaskDataset(ALOHADataset):
             )
             
         # T5 Embeddings Loading / Generation
-        # TODO: This is dataset wise unified text description embedding, should be changed in the future
         t5_embeddings_path = os.path.join(self.data_dir, "t5_embeddings.pkl")
         if not os.path.exists(t5_embeddings_path):
             print(f"T5 embeddings not found at {t5_embeddings_path}. Generating...")
@@ -417,6 +432,17 @@ class AnyTaskDataset(ALOHADataset):
             num_steps=episode_data["num_steps"],
         )
 
+        next_relative_step_idx = min(
+            relative_step_idx + self.chunk_size,
+            episode_data["num_steps"] - 1,
+        )
+        next_action_chunk = get_action_chunk_with_padding(
+            actions=episode_data["actions"],
+            relative_step_idx=next_relative_step_idx,
+            chunk_size=self.chunk_size,
+            num_steps=episode_data["num_steps"],
+        )
+
         # Get return (value)
         if self.return_value_function_returns:
             # Simple retrieval for now
@@ -429,6 +455,20 @@ class AnyTaskDataset(ALOHADataset):
                 value_function_return = float("-100") # Placeholder
         else:
             value_function_return = float("-100")
+
+        next_future_frame_idx = min(
+            next_relative_step_idx + self.chunk_size,
+            episode_data["num_steps"] - 1,
+        )
+        if self.return_value_function_returns:
+            if episode_metadata is not None and "returns" in episode_metadata:
+                next_value_function_return = episode_metadata["returns"][next_future_frame_idx]
+            elif "returns" in episode_data:
+                next_value_function_return = episode_data["returns"][next_future_frame_idx]
+            else:
+                next_value_function_return = float("-100")
+        else:
+            next_value_function_return = float("-100")
 
         # T5 Embeddings (Dummy)
         # We need to ensure we return a valid tensor.
@@ -460,6 +500,8 @@ class AnyTaskDataset(ALOHADataset):
             "future_proprio_latent_idx": torch.tensor(future_proprio_latent_idx, dtype=torch.int64),
             "future_wrist_image_latent_idx": torch.tensor(future_wrist_image_latent_idx, dtype=torch.int64),
             "future_image_latent_idx": torch.tensor(future_image_latent_idx, dtype=torch.int64),
+            "next_action_chunk": next_action_chunk,
+            "next_value_function_return": torch.tensor(next_value_function_return, dtype=torch.float32),
         }
         
         if self.use_proprio:

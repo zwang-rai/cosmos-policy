@@ -1,57 +1,50 @@
 #!/bin/bash
 
-# Configuration
-NUM_GPUS=1
-CONFIG_FILE="cosmos_policy/config/config.py"
-EXPERIMENT="cosmos_predict2_2b_480p_anytask"
+export NUM_GPUS="${NUM_GPUS:8}"
+export CONFIG_FILE="${CONFIG_FILE:-cosmos_policy/config/config.py}"
 
-# Optional: Resume from LIBERO policy checkpoint
-# LIBERO_CKPT="nvidia/Cosmos-Policy-LIBERO-Predict2-2B/libero_model.pt"
+if [ -z "$1" ]; then
+    echo "Usage: $0 <EXPERIMENT> [extra_opts...]"
+    exit 1
+fi
+EXPERIMENT="$1"
+shift
 
 echo "Starting fine-tuning with $NUM_GPUS GPUs..."
 echo "Experiment: $EXPERIMENT"
 
-# Check for verify mode
-EXTRA_OPTS=""
-if [[ "$*" == *"verify"* ]]; then
-    echo "Running in VERIFY mode (minimal resources)..."
-    # Override batch size and max steps if possible via command line
-    # Depending on how the config handles overrides, we might need specific syntax
-    # For LazyConfig, it's usually path.key=value
-    EXTRA_OPTS="dataloader_train.batch_size=1 trainer.max_iter=1 trainer.logging_iter=1"
-    # Remove 'verify' from arguments
-    set -- "${@/verify/}"
-fi
-
-echo "Passing extra arguments: $EXTRA_OPTS $@"
-
-# Build the command arguments array
-ARGS=(
-    --config "$CONFIG_FILE"
-    --
-    "experiment=$EXPERIMENT"
-)
-
-# Add extra options if they exist
-if [ -n "$EXTRA_OPTS" ]; then
-    for opt in $EXTRA_OPTS; do
-        ARGS+=("$opt")
-    done
-fi
-
-# Add remaining script arguments
+# Collect extra options, handling 'verify' mode specially
+EXTRA_OPTS=()
 for arg in "$@"; do
-    if [ -n "$arg" ]; then
-        ARGS+=("$arg")
+    if [[ "$arg" == "verify" ]]; then
+        echo "Running in VERIFY mode (minimal resources)..."
+        EXTRA_OPTS+=(
+            "trainer.max_iter=1"
+            "trainer.logging_iter=1"
+            "callbacks=[basic]"
+        )
+    else
+        EXTRA_OPTS+=("$arg")
     fi
 done
 
-echo "Passing extra arguments: ${ARGS[@]:2}"
+if [ ${#EXTRA_OPTS[@]} -gt 0 ]; then
+    echo "Passing extra arguments: ${EXTRA_OPTS[*]}"
+fi
 
 # Use a dynamic port to avoid EADDRINUSE errors
 MASTER_PORT=$(shuf -i 20000-65000 -n 1)
 
-uv run --extra cu128 --group libero --python 3.10 torchrun \
-    --nproc_per_node=$NUM_GPUS \
-    --rdzv_endpoint=localhost:$MASTER_PORT \
-    -m cosmos_policy.scripts.train "${ARGS[@]}"
+# Isolate uv virtual environment and cache locally per pod
+export UV_PROJECT_ENVIRONMENT="/tmp/.venv-$(hostname)"
+export UV_CACHE_DIR="/tmp/uv-cache-$(hostname)"
+export IMAGINAIRE_OUTPUT_ROOT="/storage/nfs/zwang/cosmos-policy-checkpoints/$(hostname)"
+
+uv run --extra cu128 --group aloha --python 3.10 torchrun \
+    --nproc_per_node="$NUM_GPUS" \
+    --rdzv_endpoint="localhost:$MASTER_PORT" \
+    -m cosmos_policy.scripts.train \
+    --config "$CONFIG_FILE" \
+    -- \
+    "experiment=$EXPERIMENT" \
+    "${EXTRA_OPTS[@]}"

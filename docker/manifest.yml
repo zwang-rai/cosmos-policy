@@ -1,0 +1,54 @@
+apiVersion: "kubeflow.org/v1"
+kind: PyTorchJob
+metadata:
+  name: zwang-cosmos-policy-03
+  namespace: proj-fm
+  labels:
+    owner: zwang
+    team: proj-fm
+    billing-group: proj-fm
+spec:
+  pytorchReplicaSpecs:
+    Master:
+      replicas: 1
+      restartPolicy: OnFailure
+      template:
+        spec:
+          imagePullSecrets:
+            - name: artifact-registry-secret
+          #nodeSelector:
+            #nvidia.com/gpu.product: NVIDIA-H100-80GB-HBM3
+          containers:
+            - name: pytorch
+              env:
+                - name: NCCL_SOCKET_IFNAME
+                  value: "eth0"
+                - name: NCCL_DEBUG
+                  value: "WARN"
+              image: us-docker.pkg.dev/engineering-380817/bdai/foundation_models/zwang-cosmos-policy:initial
+              imagePullPolicy: Always
+              command: ["/bin/bash", "-c", "sleep infinity"]
+              resources:
+                limits:
+                  nvidia.com/gpu: 8
+                  rdma/rdma_shared_devices_all: 8
+                requests:
+                  nvidia.com/gpu: 8
+                  rdma/rdma_shared_devices_all: 8
+              volumeMounts:
+                - mountPath: /storage/nfs/   # wherever you want
+                  name: fm-mounts         # just has to match the name below
+                # --- START: Add this volumeMount for shared memory ---
+                - mountPath: /dev/shm
+                  name: dshm
+                # --- END: Add this volumeMount for shared memory ---
+          volumes:
+            - name: fm-mounts   # just has to match the name above
+              persistentVolumeClaim:
+                claimName: proj-fm-cluster-root  # This is predefined
+            # --- START: Add this volume for shared memory ---
+            - name: dshm
+              emptyDir:
+                medium: Memory
+                sizeLimit: 64Gi
+            # --- END: Add this volume for shared memory ---

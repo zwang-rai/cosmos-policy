@@ -13,9 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM rayproject/ray:nightly-py310-cu128
+FROM nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04
 
-USER root
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN --mount=type=cache,target=/var/cache/apt \
@@ -28,6 +27,7 @@ RUN --mount=type=cache,target=/var/cache/apt \
         ffmpeg \
         git \
         git-lfs \
+        gosu \
         libgl1 \
         libegl1-mesa-dev \
         libgl1-mesa-dri \
@@ -44,5 +44,7 @@ COPY --from=ghcr.io/astral-sh/uv:0.8.12 /uv /uvx /usr/local/bin/
 # Install just: https://just.systems/man/en/pre-built-binaries.html
 RUN curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin --tag 1.42.4
 
-CMD ["/bin/bash"]
+COPY --chown=root:root --chmod=0755 entrypoint.sh /usr/local/bin/cosmos-policy-entrypoint
+ENTRYPOINT ["/usr/local/bin/cosmos-policy-entrypoint"]
 
+CMD ["/bin/bash"]

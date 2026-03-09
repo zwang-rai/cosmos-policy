@@ -7,6 +7,9 @@
 *.jpg
 *.gif
 *.json
+data/*
+checkpoints/*
+my_venv/
 __pycache__/
 *.pkl
 LIBERO-Cosmos-Policy/*

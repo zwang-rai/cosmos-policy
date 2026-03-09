@@ -43,6 +43,18 @@ ALOHA_CONSTANTS = {
     "PROPRIO_DIM": 14,
 }
 
+FRANKA_SINGLE_CONSTANTS = {
+    "NUM_ACTIONS_CHUNK": 50,
+    "ACTION_DIM": 8,
+    "PROPRIO_DIM": 8,
+}
+
+FRANKA_DUAL_CONSTANTS = {
+    "NUM_ACTIONS_CHUNK": 50,
+    "ACTION_DIM": 16,
+    "PROPRIO_DIM": 16,
+}
+
 ANYTASK_CONSTANTS = {
     "NUM_ACTIONS_CHUNK": 16,
     "ACTION_DIM": 7,
@@ -62,6 +74,10 @@ def detect_robot_platform():
         return "ALOHA"
     elif "anytask" in cmd_args or "skillgen" in cmd_args:
         return "ANYTASK"
+    elif "franka_single" in cmd_args:
+        return "FRANKA_SINGLE"
+    elif "franka_dual" in cmd_args:
+        return "FRANKA_DUAL"
     else:
         # Default to LIBERO if unclear
         return "LIBERO"
@@ -77,6 +93,10 @@ elif ROBOT_PLATFORM == "ROBOCASA":
     constants = ROBOCASA_CONSTANTS
 elif ROBOT_PLATFORM == "ALOHA":
     constants = ALOHA_CONSTANTS
+elif ROBOT_PLATFORM == "FRANKA_SINGLE":
+    constants = FRANKA_SINGLE_CONSTANTS
+elif ROBOT_PLATFORM == "FRANKA_DUAL":
+    constants = FRANKA_DUAL_CONSTANTS
 elif ROBOT_PLATFORM == "ANYTASK":
     constants = ANYTASK_CONSTANTS
 
