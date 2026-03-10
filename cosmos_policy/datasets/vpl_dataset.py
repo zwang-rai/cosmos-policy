@@ -141,6 +141,7 @@ class VPLDataset(ALOHADataset):
                     # [x, y, z, roll, pitch, yaw, gripper]
                     actions = np.concatenate([ee_pos, ee_euler, gripper], axis=-1).astype(np.float32)
                     proprio = actions.copy() # follow libero
+                    # proprio = f['joint_positions'][:].astype(np.float32) # (T, 7) for 7-DoF Franka
 
                     episode_num_steps = actions.shape[0]
 
